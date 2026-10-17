@@ -100,7 +100,7 @@ if _TI_AVAILABLE:
                            img: ti.template(),
                            cam_x: ti.f32, cam_y: ti.f32, cam_z: ti.f32,
                            yaw: ti.f32, pitch: ti.f32, ambient: ti.f32,
-                           do_shadows: ti.i32):
+                           do_shadows: ti.i32, time: ti.f32):
             for py, px in ti.ndrange(_H, _W):
                 ha = yaw + (float(px) / float(_W) - 0.5) * 1.2217
                 va = pitch - (float(py) / float(_H) - 0.5) * 0.9599
@@ -266,6 +266,85 @@ if _TI_AVAILABLE:
                     img[py, px, 1] = gg
                     img[py, px, 2] = bb
 
+            # --- atmosphere pass: dust motes + fog ---
+            # dust: 150 particles, positions from hash, drift with time
+            for i in range(150):
+                # pseudo-random 3D position in a 40x40x20 box around camera
+                h1 = hash3(i, 7, 3)
+                h2 = hash3(i, 13, 5)
+                h3 = hash3(i, 29, 11)
+                # drift: slow upward + sideways sine
+                dx = (h1 - 0.5) * 40.0 + ti.sin(time * 0.3 + float(i)) * 2.0
+                dy = (h2 - 0.5) * 40.0 + ti.cos(time * 0.2 + float(i) * 1.7) * 2.0
+                dz = (h3 - 0.5) * 20.0 + time * 0.5 % 20.0 - 10.0
+                # world position
+                wx = cam_x + dx
+                wy = cam_y + dy
+                wz = cam_z + dz
+                # project to screen (same as main loop)
+                ddx = wx - cam_x
+                ddy = wy - cam_y
+                ddz = wz - cam_z
+                cy, sy = ti.cos(yaw), ti.sin(yaw)
+                fx = ddx * cy + ddy * sy
+                ry = -ddx * sy + ddy * cy
+                cp, sp = ti.cos(pitch), ti.sin(pitch)
+                fxp = fx * cp + ddz * sp
+                uzp = -fx * sp + ddz * cp
+                if fxp < 0.5:
+                    continue
+                sx = 0.5 + (ry / fxp) / ti.tan(0.6109) * 0.5
+                sy_scr = 0.5 - (uzp / fxp) / ti.tan(0.4800) * 0.5
+                px = int(sx * _W)
+                py = int(sy_scr * _H)
+                if px < 2 or px >= _W - 2 or py < 2 or py >= _H - 2:
+                    continue
+                # soft dot (3x3 with falloff)
+                brightness = 0.15 * (0.5 + 0.5 * h1)  # subtle
+                # fade with distance
+                brightness *= ti.exp(-fxp * 0.05)
+                for oy in range(-1, 2):
+                    for ox in range(-1, 2):
+                        d2 = float(ox*ox + oy*oy) / 2.0
+                        a = brightness * ti.exp(-2.0 * d2)
+                        img[py+oy, px+ox, 0] += a
+                        img[py+oy, px+ox, 1] += a * 0.9
+                        img[py+oy, px+ox, 2] += a * 0.7
+
+            # lava glow points: soft halo at each lava pool's screen position
+            # (cheap approximation of light shafts)
+            for li in range(ti.min(n_lava[None], 64)):
+                lx = lava_pos[li, 0]
+                ly = lava_pos[li, 1]
+                lz = lava_pos[li, 2]
+                ddx = lx - cam_x
+                ddy = ly - cam_y
+                ddz = lz - cam_z
+                cy, sy = ti.cos(yaw), ti.sin(yaw)
+                fx = ddx * cy + ddy * sy
+                if fx < 1.0:
+                    continue
+                ry = -ddx * sy + ddy * cy
+                cp, sp = ti.cos(pitch), ti.sin(pitch)
+                fxp = fx * cp + ddz * sp
+                uzp = -fx * sp + ddz * cp
+                if fxp < 0.5:
+                    continue
+                sx = 0.5 + (ry / fxp) / ti.tan(0.6109) * 0.5
+                sy_scr = 0.5 - (uzp / fxp) / ti.tan(0.4800) * 0.5
+                px = int(sx * _W)
+                py = int(sy_scr * _H)
+                if px < 3 or px >= _W - 3 or py < 3 or py >= _H - 3:
+                    continue
+                # 7x7 soft halo
+                for oy in range(-3, 4):
+                    for ox in range(-3, 4):
+                        d2 = float(ox*ox + oy*oy) / 18.0
+                        a = 0.12 * ti.exp(-2.0 * d2) * ti.exp(-fx * 0.02)
+                        img[py+oy, px+ox, 0] += a
+                        img[py+oy, px+ox, 1] += a * 0.45
+                        img[py+oy, px+ox, 2] += a * 0.15
+
         return _render_kernel
 
     _render_kernel_fn = None
@@ -320,5 +399,5 @@ def render(voxels, cam_pos, yaw, pitch=0.0, ambient=1.0, shadows=True,
     kernel(_voxels_ti, _glow_ti, _lava_pos_ti, _n_lava, _img_ti,
            float(cam_pos[0]), float(cam_pos[1]), float(cam_pos[2]),
            float(yaw), float(pitch), float(ambient),
-           1 if shadows else 0)
+           1 if shadows else 0, 0.0)  # time=0 for stills
     return np.clip(_img_ti.to_numpy(), 0, 1).astype(np.float32)

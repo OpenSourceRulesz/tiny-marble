@@ -48,8 +48,58 @@ def _clear_spawn(v, rng):
     return cx, cy
 
 
+def _cellular_cave(G, rng, fill=0.42, iterations=4):
+    """Organic cave via cellular automata (6-neighborhood).
+    Creates connected tunnels, not floating blobs."""
+    v = (rng.random((G, G, G)) < fill).astype(np.int64)
+    v[0, :, :] = v[-1, :, :] = 1
+    v[:, 0, :] = v[:, -1, :] = 1
+    v[:, :, 0] = v[:, :, -1] = 1
+    for _ in range(iterations):
+        # 6-neighborhood (face-adjacent only)
+        padded = np.pad(v, 1)
+        neighbors = (padded[2:, 1:-1, 1:-1] + padded[:-2, 1:-1, 1:-1] +
+                     padded[1:-1, 2:, 1:-1] + padded[1:-1, :-2, 1:-1] +
+                     padded[1:-1, 1:-1, 2:] + padded[1:-1, 1:-1, :-2])
+        # wall if 4+ of 6 neighbors are walls (stricter smoothing)
+        v = (neighbors >= 4).astype(np.int64)
+        v[0, :, :] = v[-1, :, :] = 1
+        v[:, 0, :] = v[:, -1, :] = 1
+        v[:, :, 0] = v[:, :, -1] = 1
+    return v
+
+
+def _add_stalactites(v, rng, n=40):
+    """Stalactites (ceiling) and stalagmites (floor) for caverns."""
+    G = v.shape[0]
+    for _ in range(n):
+        x, y = int(rng.integers(2, G-2)), int(rng.integers(2, G-2))
+        # find ceiling (first wall from top)
+        for z in range(G-2, 0, -1):
+            if v[x, y, z] == 1:
+                # stalactite hanging down
+                length = int(rng.integers(2, 6))
+                for dz in range(1, length+1):
+                    if z-dz > 1 and v[x, y, z-dz] == 0:
+                        v[x, y, z-dz] = 1
+                    else:
+                        break
+                break
+        # stalagmite (from floor up)
+        for z in range(1, G-1):
+            if v[x, y, z] == 0:
+                length = int(rng.integers(2, 5))
+                for dz in range(length):
+                    if z+dz < G-1 and v[x, y, z+dz] == 0:
+                        v[x, y, z+dz] = 1
+                    else:
+                        break
+                break
+    return v
+
+
 def procedural_voxel(style=0, seed=None):
-    """16^3 voxel world. 0=empty, 1=wall, 2=accent. Floor z=0 solid,
+    """32^3 voxel world. 0=empty, 1=wall, 2=accent. Floor z=0 solid,
     border walls full height. Returns (voxels, (spawn_x, spawn_y))."""
     rng = np.random.default_rng(seed)
     v = np.zeros((G, G, G), dtype=np.int64)
@@ -59,7 +109,7 @@ def procedural_voxel(style=0, seed=None):
     style = int(style) % N_STYLES
 
     if style == 0:  # rooms: wall segments with door gaps + pillars
-        for _ in range(int(rng.integers(2, 4))):
+        for _ in range(int(rng.integers(3, 5))):
             if rng.random() < 0.5:  # vertical wall run
                 x = int(rng.integers(3, G - 3))
                 y0 = int(rng.integers(2, G - 4))
@@ -75,18 +125,15 @@ def procedural_voxel(style=0, seed=None):
                 v[x0:x1, y, 1:] = WALL
                 v[gap, y, 1:] = EMPTY
         n_pil = int(rng.integers(12, 25))
-    elif style == 1:  # cavern: rock blobs floating in open space
-        n_blob = int(rng.integers(18, 32))
-        xx, yy, zz = np.mgrid[0:G, 0:G, 0:G]
-        for _ in range(n_blob):
-            cx, cy, cz = (int(rng.integers(4, G - 4)),
-                          int(rng.integers(4, G - 4)),
-                          int(rng.integers(8, G - 8)))
-            rx, ry, rz = (int(rng.integers(2, 5)), int(rng.integers(2, 5)),
-                          int(rng.integers(2, 5)))
-            d = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 \
-                + ((zz - cz) / rz) ** 2
-            v[d <= 1.0] = WALL
+    elif style == 1:  # cavern: cellular automata caves + stalactites
+        cave = _cellular_cave(G, rng, fill=0.45, iterations=4)
+        # carve out the cave (invert: CA gives walls, we want tunnels)
+        # Actually CA already gives us walls; empty the interior
+        v[cave == 0] = EMPTY
+        v[cave == 1] = WALL
+        # ensure floor stays
+        v[:, :, 0] = WALL
+        v = _add_stalactites(v, rng, n=50)
         n_pil = 0
     else:  # arena: open + pillars
         n_pil = int(rng.integers(24, 44))

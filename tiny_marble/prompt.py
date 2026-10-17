@@ -56,23 +56,24 @@ def parse_prompt(text):
 
 
 def _add_pools(v, rng, material, n_pools):
-    """Scatter glowing pools on the floor (z=1), each with clear sky above
-    so the pool is actually visible from the camera (cavern rock blobs
-    would otherwise bury them under an overhang)."""
+    """Scatter glowing pools on the floor (z=1). For CA caves, just need
+    the pool cell to be empty (it's in a tunnel); don't require 20 units
+    of sky (that's for the old blob caves)."""
     placed = 0
     for _ in range(n_pools * 40):  # attempts; bail out gracefully
         if placed >= n_pools:
             break
         cx, cy = int(rng.integers(3, G - 3)), int(rng.integers(3, G - 3))
-        if not (v[cx, cy, 2:22] == EMPTY).all():
-            continue  # rock overhang above -- pool would be invisible
-        r = int(rng.integers(2, 5))
+        # need empty at z=1 (floor level) and z=2 (headroom)
+        if not (v[cx, cy, 1] == EMPTY and v[cx, cy, 2] == EMPTY):
+            continue
+        r = int(rng.integers(2, 4))
         for dx in range(-r, r + 1):
             for dy in range(-r, r + 1):
                 if dx * dx + dy * dy <= r * r:
                     x, y = cx + dx, cy + dy
                     if 1 <= x < G - 1 and 1 <= y < G - 1:
-                        if v[x, y, 1] == EMPTY:
+                        if v[x, y, 1] == EMPTY and v[x, y, 2] == EMPTY:
                             v[x, y, 1] = material
         placed += 1
 
