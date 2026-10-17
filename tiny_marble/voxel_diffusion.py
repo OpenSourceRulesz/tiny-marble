@@ -130,12 +130,12 @@ class SlicePrior:
 
     SDIM = G * G
 
-    def __init__(self, n_styles=N_STYLES, seed=0, attr_dim=0):
+    def __init__(self, n_styles=N_STYLES, seed=0, attr_dim=0, hidden=128):
         self.n_styles = n_styles
         self.attr_dim = attr_dim
         cond_dim = attr_dim if attr_dim > 0 else n_styles
         # (noisy slice + prev slice + height 1 + time 16 + cond)
-        self.net = MLP([2 * self.SDIM + 1 + 16 + cond_dim, 128, 128,
+        self.net = MLP([2 * self.SDIM + 1 + 16 + cond_dim, hidden, hidden,
                         self.SDIM], seed=seed)
 
     def _condition(self, t_idx, styles_or_attrs, heights):
@@ -262,8 +262,10 @@ class SlicePrior:
     def load(cls, path, seed=0):
         d = np.load(path)
         attr_dim = int(d["attr_dim"][0]) if "attr_dim" in d else 0
+        # infer hidden dim from weight shape
+        hidden = d["net.0.W"].shape[1] if "net.0.W" in d else 128
         self = cls(n_styles=int(d["n_styles"][0]), seed=seed,
-                   attr_dim=attr_dim)
+                   attr_dim=attr_dim, hidden=hidden)
         self.net.load_parameters(
             {k.split(".", 1)[1]: d[k] for k in d.files
              if k.startswith("net.")})

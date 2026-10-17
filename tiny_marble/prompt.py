@@ -194,8 +194,9 @@ def dream_from_prompt_neural(text, seed=None, use_llm=False,
     avec = attrs_to_vec(attrs)
 
     if checkpoint is None:
+        # v2: 256-wide, 10k steps, 93k pairs (better than v1)
         checkpoint = os.path.join(os.path.dirname(__file__),
-                                  "checkpoints", "attr_slice_v1.npz")
+                                  "checkpoints", "attr_slice_v2.npz")
     model = SlicePrior.load(checkpoint)
     v = model.sample_attrs(avec, seed=seed)
 

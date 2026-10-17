@@ -80,7 +80,7 @@ def main():
     t0 = time.time()
 
     rng = np.random.default_rng(0)
-    n_worlds = 300
+    n_worlds = 3000
 
     print(f"Generating {n_worlds} attributed worlds...")
     prevs, slices, attrs_list, heights = [], [], [], []
@@ -107,13 +107,13 @@ def main():
     heights = np.array(heights, dtype=np.int64)
     print(f"  {len(slices)} slice pairs in {time.time()-t0:.0f}s")
 
-    print("Training attribute-conditioned SlicePrior...")
-    model = SlicePrior(attr_dim=ATTR_DIM, seed=0)
-    model.fit(prevs, slices, attrs_arr, heights, steps=2000, batch=128,
-              seed=1, log_every=500)
+    print("Training attribute-conditioned SlicePrior (256-wide, 10k steps)...")
+    model = SlicePrior(attr_dim=ATTR_DIM, seed=0, hidden=256)
+    model.fit(prevs, slices, attrs_arr, heights, steps=10000, batch=128,
+              seed=1, log_every=1000)
 
     out = os.path.join(os.path.dirname(__file__), "..", "tiny_marble",
-                       "checkpoints", "attr_slice_v1.npz")
+                       "checkpoints", "attr_slice_v2.npz")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     params = model.net.parameters()
     params["attr_dim"] = np.array([ATTR_DIM])
