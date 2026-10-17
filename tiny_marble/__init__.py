@@ -10,13 +10,16 @@ Like World Labs' Marble, tiny: 32^3 voxels, Taichi-accelerated rendering
 from .voxel import (VoxelWorld, dream_voxel_world, procedural_voxel,
                     raycast, G, RES, EMPTY, WALL, ACCENT, WISP, LAVA, WATER,
                     STYLES)
-from .prompt import parse_prompt, dream_from_prompt, ATTRIBUTES
+from .prompt import (parse_prompt, parse_prompt_llm, dream_from_prompt,
+                     dream_from_prompt_neural, ATTRIBUTES, attrs_to_vec,
+                     ATTR_DIM)
 from .voxel_diffusion import VoxelPrior, HeightfieldPrior, SlicePrior
 
 __all__ = [
     "VoxelWorld", "dream_voxel_world", "procedural_voxel", "raycast",
     "G", "RES", "EMPTY", "WALL", "ACCENT", "WISP", "LAVA", "WATER",
-    "STYLES", "parse_prompt", "dream_from_prompt", "ATTRIBUTES",
+    "STYLES", "parse_prompt", "parse_prompt_llm", "dream_from_prompt",
+    "dream_from_prompt_neural", "ATTRIBUTES", "attrs_to_vec", "ATTR_DIM",
     "VoxelPrior", "HeightfieldPrior", "SlicePrior",
 ]
 

@@ -123,24 +123,34 @@ class SlicePrior:
     learns P(slice_z | slice_{z-1}, height z, style): walls continue up,
     pillars stop, rooms stay open. Like a 3D printer with a diffusion
     print head. This is the working 3D dreamer.
+
+    If attr_dim is set, conditions on attribute vectors instead of style
+    indices (for prompt-to-world: text -> attributes -> voxels).
     """
 
     SDIM = G * G
 
-    def __init__(self, n_styles=N_STYLES, seed=0):
+    def __init__(self, n_styles=N_STYLES, seed=0, attr_dim=0):
         self.n_styles = n_styles
-        # (noisy slice 256 + prev slice 256 + height 1 + time 16 + style 3)
-        self.net = MLP([2 * self.SDIM + 1 + 16 + n_styles, 128, 128,
+        self.attr_dim = attr_dim
+        cond_dim = attr_dim if attr_dim > 0 else n_styles
+        # (noisy slice + prev slice + height 1 + time 16 + cond)
+        self.net = MLP([2 * self.SDIM + 1 + 16 + cond_dim, 128, 128,
                         self.SDIM], seed=seed)
 
-    def _condition(self, t_idx, styles, heights):
+    def _condition(self, t_idx, styles_or_attrs, heights):
         B = len(t_idx)
         te = _time_embed(t_idx / T) * 2.0
-        onehot = np.zeros((B, self.n_styles), dtype=np.float32)
-        onehot[np.arange(B), styles] = 3.0
+        if self.attr_dim > 0:
+            # attributes: already a (B, attr_dim) float array
+            cond = np.asarray(styles_or_attrs, dtype=np.float32)
+        else:
+            onehot = np.zeros((B, self.n_styles), dtype=np.float32)
+            onehot[np.arange(B), styles_or_attrs] = 3.0
+            cond = onehot
         h = (np.asarray(heights, dtype=np.float32).reshape(-1, 1)
              / 15.0 * 2 - 1)
-        return np.concatenate([te, onehot, h], axis=1)
+        return np.concatenate([te, cond, h], axis=1)
 
     def _q_sample(self, x0, t_idx, rng):
         alpha = (1.0 - (t_idx / T) * 0.85).reshape(-1, 1)
@@ -178,12 +188,16 @@ class SlicePrior:
                       f"({time.time()-t0:.0f}s)", flush=True)
         return self
 
-    def _denoise(self, xt, prev, style, height, rng, steps=T):
+    def _denoise(self, xt, prev, style_or_attr, height, rng, steps=T):
         x = xt
         for ti in range(steps, 0, -1):
             t_idx = np.array([ti])
-            cond = self._condition(t_idx, np.array([style]),
-                                   np.array([height]))
+            if self.attr_dim > 0:
+                cond = self._condition(t_idx, style_or_attr.reshape(1, -1),
+                                       np.array([height]))
+            else:
+                cond = self._condition(t_idx, np.array([style_or_attr]),
+                                       np.array([height]))
             x0_hat = self.net.forward(
                 np.concatenate([x, prev.reshape(1, -1), cond], axis=1))
             if ti > 1:
@@ -215,16 +229,41 @@ class SlicePrior:
                                                      ).reshape(1, -1)
         return v
 
+
+    def sample_attrs(self, attr_vec, seed=None):
+        """Generate voxels conditioned on attribute vector (6-dim)."""
+        assert self.attr_dim > 0, "model not trained with attributes"
+        rng = np.random.default_rng(seed)
+        v = np.zeros((G, G, G), dtype=np.int64)
+        v[:, :, 0] = WALL
+        v[0, :, 1:] = v[-1, :, 1:] = WALL
+        v[:, 0, 1:] = v[:, -1, 1:] = WALL
+        prev = np.where(v[:, :, 0].reshape(-1) > 0, 1.0, -1.0
+                        ).astype(np.float32).reshape(1, -1)
+        avec = np.asarray(attr_vec, dtype=np.float32)
+        for z in range(1, G):
+            xt = rng.standard_normal((1, self.SDIM)).astype(np.float32)
+            s = self._denoise(xt, prev, avec, z, rng)
+            sl = (s.reshape(G, G) > 0).astype(np.int64)
+            sl[0, :] = sl[-1, :] = sl[:, 0] = sl[:, -1] = 1
+            v[:, :, z] = sl
+            prev = np.where(s > 0, 1.0, -1.0).astype(np.float32
+                                                     ).reshape(1, -1)
+        return v
+
     def save(self, path):
         arrays = {f"net.{k}": v
                   for k, v in self.net.parameters().items()}
         arrays["n_styles"] = np.array([self.n_styles])
+        arrays["attr_dim"] = np.array([self.attr_dim])
         np.savez(path, **arrays)
 
     @classmethod
     def load(cls, path, seed=0):
         d = np.load(path)
-        self = cls(n_styles=int(d["n_styles"][0]), seed=seed)
+        attr_dim = int(d["attr_dim"][0]) if "attr_dim" in d else 0
+        self = cls(n_styles=int(d["n_styles"][0]), seed=seed,
+                   attr_dim=attr_dim)
         self.net.load_parameters(
             {k.split(".", 1)[1]: d[k] for k in d.files
              if k.startswith("net.")})
